@@ -57,7 +57,7 @@ client.lavalink = new LavalinkManager({
   playerOptions: {
     defaultSearchPlatform:             "ytmsearch",
     onDisconnect:                      { autoReconnect: true, destroyPlayer: false },
-    onEmptyQueue:                      { destroyAfterMs: 0 },
+    onEmptyQueue:                      { destroyAfterMs: 30000 },
     applyVolumeAsFilter:               false,
     clientBasedPositionUpdateInterval: 100,
   },
