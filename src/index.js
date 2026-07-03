@@ -6,9 +6,13 @@ const fs   = require("fs");
 const path = require("path");
 const { formatDuration, progressBar, resolveSpotify, getSpotifyRecommendations, extractSpotifyId, setVoiceStatus, clearVoiceStatus } = require("./utils/helpers");
 const { purgeExpired } = require("./utils/queueStore");
+const mvStreamer = require("./stream/mvStreamer");
 
 // Purge expired saved queues on startup
 purgeExpired();
+
+// Bring up the MV self-bot streaming connection (no-op if STREAM_USER_TOKEN unset)
+mvStreamer.init().catch(err => console.error("[MVStream] init failed:", err.message));
 
 // ─── Discord client ───────────────────────────────────────────────────────────
 const client = new Client({
@@ -151,7 +155,7 @@ async function handleAutoplay(player, lastTrack) {
     const requester = lastTrack.requester || client.user;
     const id = lastTrack.info.identifier;
     const sourceName = lastTrack.info.sourceName || "unknown";
-    
+
     console.log(`[Autoplay] Seeding from: "${lastTrack.info.title}" (id=${id}) source=${sourceName}`);
 
     let recommendations = [];
@@ -163,17 +167,17 @@ async function handleAutoplay(player, lastTrack) {
         if (spotifyId) {
           console.log(`[Autoplay] Fetching Spotify recommendations for track ID: ${spotifyId}`);
           const spotifyTracks = await getSpotifyRecommendations(spotifyId, 10);
-          
+
           if (spotifyTracks.length > 0) {
             console.log(`[Autoplay] Got ${spotifyTracks.length} Spotify recommendations`);
             const played = new Set((player.queue.previous || []).map(t => t.info.identifier));
-            
+
             // Search for each recommendation on YouTube/YTMusic
             for (const spotTrack of spotifyTracks) {
               try {
                 const query = `${spotTrack.artists?.[0]?.name || ""} ${spotTrack.name}`.trim();
                 const res = await player.search({ query, source: "ytmsearch" }, requester);
-                
+
                 if (res?.tracks?.[0]) {
                   const track = res.tracks[0];
                   if (!played.has(track.info.identifier)) {
@@ -346,14 +350,14 @@ client.lavalink
     // BUILT-IN AUTOPLAY — Always trigger automatically
     const seed = player.queue.previous?.[0];
     console.log(`[Autoplay] queueEnd triggered — seed: "${seed?.info?.title || "NONE"}"`);
-    
+
     if (seed) {
       console.log(`[Autoplay] Starting recommendation generation...`);
       await handleAutoplay(player, seed);
-      
+
       // Wait a moment for queue to populate
       await new Promise(r => setTimeout(r, 500));
-      
+
       // Check if recommendations were added
       if (player.queue.tracks.length > 0) {
         console.log(`[Autoplay] Successfully queued recommendations. Queue size: ${player.queue.tracks.length}`);
@@ -392,6 +396,11 @@ client.on("raw", d => {
 
 // ─── Slash command handler ────────────────────────────────────────────────────
 client.on("interactionCreate", async interaction => {
+  if (interaction.isAutocomplete()) {
+    const command = client.commands.get(interaction.commandName);
+    if (command?.autocomplete) command.autocomplete(interaction, client).catch(() => {});
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
