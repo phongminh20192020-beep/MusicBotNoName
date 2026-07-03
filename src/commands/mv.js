@@ -7,6 +7,7 @@ const { spawn } = require("child_process");
 const mvStreamer = require("../stream/mvStreamer");
 
 const VIDEOS_DIR = process.env.MV_VIDEOS_DIR || "./videos";
+const YTDLP_COOKIES_PATH = process.env.MV_YTDLP_COOKIES_PATH || "";
 
 function ensureVideosDir() {
   if (!fs.existsSync(VIDEOS_DIR)) fs.mkdirSync(VIDEOS_DIR, { recursive: true });
@@ -33,6 +34,10 @@ function downloadVideo(url, customName) {
       "--merge-output-format", "mp4",
       "--print", "after_move:filepath",
     ];
+
+    if (YTDLP_COOKIES_PATH && fs.existsSync(YTDLP_COOKIES_PATH)) {
+      args.push("--cookies", YTDLP_COOKIES_PATH);
+    }
 
     const proc = spawn("yt-dlp", args);
 
@@ -108,7 +113,10 @@ module.exports = {
         await interaction.editReply(`✅ Saved as \`${filename}\`. Use \`/mv play\` and pick it from the list.`);
       } catch (err) {
         console.error("[mv download] failed:", err.message);
-        await interaction.editReply(`❌ Download failed: ${err.message}`);
+        const hint = /sign in to confirm/i.test(err.message)
+          ? "\n💡 YouTube is blocking this server's IP. Set `MV_YTDLP_COOKIES_PATH` to a cookies file (see bot owner)."
+          : "";
+        await interaction.editReply(`❌ Download failed: ${err.message}${hint}`);
       }
       return;
     }
