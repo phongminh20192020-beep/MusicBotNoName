@@ -12,7 +12,7 @@ COPY package.json package-lock.json ./
 RUN npm install --omit=dev
 
 COPY src ./src
-COPY cookies.txt ./cookies.txt
+COPY main/cookies.txt ./cookies.txt
 
 ENV NODE_ENV=production
 
