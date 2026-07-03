@@ -3,8 +3,10 @@ FROM node:22-alpine
 WORKDIR /app
 
 # ffmpeg is required at runtime for MV video streaming.
-# python3/make/g++ are required to build native deps (e.g. opus) during npm install.
-RUN apk add --no-cache ffmpeg python3 make g++
+# yt-dlp powers /mv download (YouTube + most video sites).
+# python3/py3-pip/make/g++ are required to build native deps and install yt-dlp.
+RUN apk add --no-cache ffmpeg python3 py3-pip make g++ \
+    && pip install --no-cache-dir --break-system-packages yt-dlp
 
 COPY package.json package-lock.json ./
 RUN npm install --omit=dev
