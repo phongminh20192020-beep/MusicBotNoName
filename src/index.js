@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Collection, EmbedBuilder } = require("discord
 const { LavalinkManager } = require("lavalink-client");
 const fs   = require("fs");
 const path = require("path");
-const { formatDuration, progressBar, resolveSpotify, setVoiceStatus, clearVoiceStatus } = require("./utils/helpers");
+const { formatDuration, progressBar, resolveSpotify, getSpotifyRecommendations, extractSpotifyId, setVoiceStatus, clearVoiceStatus } = require("./utils/helpers");
 const { purgeExpired } = require("./utils/queueStore");
 
 // Purge expired saved queues on startup
@@ -145,24 +145,75 @@ function clearNpInterval(guildId) {
   if (iv) { clearInterval(iv); client.npIntervals.delete(guildId); }
 }
 
-// ─── Autoplay ─────────────────────────────────────────────────────────────────
+// ─── Autoplay with Spotify Recommendations ────────────────────────────────────
 async function handleAutoplay(player, lastTrack) {
   try {
     const requester = lastTrack.requester || client.user;
     const id = lastTrack.info.identifier;
-    console.log(`[Autoplay] Seeding from: "${lastTrack.info.title}" (id=${id})`);
+    const sourceName = lastTrack.info.sourceName || "unknown";
+    
+    console.log(`[Autoplay] Seeding from: "${lastTrack.info.title}" (id=${id}) source=${sourceName}`);
 
-    const res = await player.search(
-      { query: `https://www.youtube.com/watch?v=${id}&list=RD${id}`, source: "youtube" },
-      requester
-    );
-    if (!res?.tracks?.length) { console.warn("[Autoplay] No related tracks found."); return; }
+    let recommendations = [];
 
-    const played = new Set((player.queue.previous || []).map(t => t.info.identifier));
-    const next   = res.tracks.filter(t => t.info.identifier !== id && !played.has(t.info.identifier));
-    if (!next.length) { console.warn("[Autoplay] Only duplicates returned — skipping."); return; }
+    // ─── Try Spotify Recommendations first ─────────────────────────────────────
+    if (sourceName === "spotify" && process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+      try {
+        const spotifyId = extractSpotifyId(lastTrack.info.uri);
+        if (spotifyId) {
+          console.log(`[Autoplay] Fetching Spotify recommendations for track ID: ${spotifyId}`);
+          const spotifyTracks = await getSpotifyRecommendations(spotifyId, 10);
+          
+          if (spotifyTracks.length > 0) {
+            console.log(`[Autoplay] Got ${spotifyTracks.length} Spotify recommendations`);
+            const played = new Set((player.queue.previous || []).map(t => t.info.identifier));
+            
+            // Search for each recommendation on YouTube/YTMusic
+            for (const spotTrack of spotifyTracks) {
+              try {
+                const query = `${spotTrack.artists?.[0]?.name || ""} ${spotTrack.name}`.trim();
+                const res = await player.search({ query, source: "ytmsearch" }, requester);
+                
+                if (res?.tracks?.[0]) {
+                  const track = res.tracks[0];
+                  if (!played.has(track.info.identifier)) {
+                    recommendations.push(track);
+                    played.add(track.info.identifier);
+                    if (recommendations.length >= 5) break;
+                  }
+                }
+              } catch (e) {
+                console.warn(`[Autoplay] Failed to resolve Spotify recommendation: ${spotTrack.name}`, e.message);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[Autoplay] Spotify recommendations failed:", err.message);
+      }
+    }
 
-    await player.queue.add(next.slice(0, 5));
+    // ─── Fallback: YouTube Related Videos ──────────────────────────────────────
+    if (recommendations.length === 0) {
+      console.log(`[Autoplay] Using YouTube fallback for: "${lastTrack.info.title}"`);
+      const res = await player.search(
+        { query: `https://www.youtube.com/watch?v=${id}&list=RD${id}`, source: "youtube" },
+        requester
+      );
+
+      if (res?.tracks?.length) {
+        const played = new Set((player.queue.previous || []).map(t => t.info.identifier));
+        recommendations = res.tracks.filter(t => t.info.identifier !== id && !played.has(t.info.identifier));
+      }
+    }
+
+    if (!recommendations.length) {
+      console.warn("[Autoplay] No recommendations found — queue will end.");
+      return;
+    }
+
+    console.log(`[Autoplay] Adding ${recommendations.length} tracks to queue`);
+    await player.queue.add(recommendations.slice(0, 5));
     if (!player.playing) await player.play();
   } catch (err) {
     console.error("[Autoplay] Error:", err.message);
@@ -283,23 +334,43 @@ client.lavalink
 
   .on("queueEnd", async (player) => {
     clearNpInterval(player.guildId);
-    await clearVoiceStatus(client, player.voiceChannelId);
+    const guildId = player.guildId;
+    const textChannelId = player.textChannelId;
 
     // AFK mode — stay in channel, do nothing
     if (player.get("afk")) {
-      console.log(`[AFK] Queue ended in guild ${player.guildId} — staying in channel (AFK mode)`);
+      console.log(`[Autoplay] Queue ended in guild ${guildId} — staying in channel (AFK mode)`);
       return;
     }
 
-    if (player.get("autoplay")) {
-      const seed = player.queue.previous[0];
-      console.log(`[Autoplay] queueEnd — seed: "${seed?.info?.title || "NONE"}"`);
-      if (seed) { handleAutoplay(player, seed); return; }
-      console.warn("[Autoplay] No previous track to seed from.");
+    // BUILT-IN AUTOPLAY — Always trigger automatically
+    const seed = player.queue.previous?.[0];
+    console.log(`[Autoplay] queueEnd triggered — seed: "${seed?.info?.title || "NONE"}"`);
+    
+    if (seed) {
+      console.log(`[Autoplay] Starting recommendation generation...`);
+      await handleAutoplay(player, seed);
+      
+      // Wait a moment for queue to populate
+      await new Promise(r => setTimeout(r, 500));
+      
+      // Check if recommendations were added
+      if (player.queue.tracks.length > 0) {
+        console.log(`[Autoplay] Successfully queued recommendations. Queue size: ${player.queue.tracks.length}`);
+        const textChannel = client.channels.cache.get(textChannelId);
+        textChannel?.send("🎵 **Autoplay activated!** Now playing recommendations based on your music...").catch(() => {});
+        return;
+      } else {
+        console.warn("[Autoplay] No recommendations were generated");
+      }
+    } else {
+      console.warn("[Autoplay] No previous track found to seed recommendations");
     }
 
-    client.channels.cache.get(player.textChannelId)
-      ?.send("Queue finished. Use `/play` to add more tracks.").catch(() => {});
+    // Fallback: queue has ended, no autoplay possible
+    await clearVoiceStatus(client, player.voiceChannelId);
+    client.channels.cache.get(textChannelId)
+      ?.send("✅ Queue finished! Use `/play` to add more tracks for non-stop music.").catch(() => {});
   });
 
 // ─── Load events ──────────────────────────────────────────────────────────────
