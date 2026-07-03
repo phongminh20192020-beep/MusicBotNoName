@@ -134,6 +134,47 @@ async function resolveSpotify(url) {
   return null;
 }
 
+// ─── Spotify Recommendations ──────────────────────────────────────────────
+/**
+ * Get track recommendations from Spotify based on seed tracks
+ * Returns array of recommended tracks with { id, name, artists, uri }
+ */
+async function getSpotifyRecommendations(spotifyTrackIds, limit = 5) {
+  try {
+    const token = await getSpotifyToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    if (!Array.isArray(spotifyTrackIds)) spotifyTrackIds = [spotifyTrackIds];
+    
+    // Limit to 5 seed tracks (Spotify API limitation)
+    const seedIds = spotifyTrackIds.slice(0, 5).join(",");
+    if (!seedIds) return [];
+
+    const url = `https://api.spotify.com/v1/recommendations?seed_tracks=${seedIds}&limit=${limit}`;
+    const res = await fetch(url, { headers });
+
+    if (!res.ok) {
+      console.error(`[Spotify] Recommendations API error (${res.status})`);
+      return [];
+    }
+
+    const data = await res.json();
+    return data.tracks || [];
+  } catch (err) {
+    console.error("[Spotify] Recommendations fetch error:", err.message);
+    return [];
+  }
+}
+
+/**
+ * Extract Spotify track ID from URI or URL
+ */
+function extractSpotifyId(spotifyUri) {
+  if (!spotifyUri) return null;
+  const match = spotifyUri.match(/spotify:track:([a-zA-Z0-9]+)|\/track\/([a-zA-Z0-9]+)/);
+  return match ? (match[1] || match[2]) : null;
+}
+
 // ─── Voice channel status ─────────────────────────────────────────────────────
 
 async function setVoiceStatus(client, channelId, status) {
@@ -155,6 +196,8 @@ module.exports = {
   progressBar,
   getSpotifyToken,
   resolveSpotify,
+  getSpotifyRecommendations,
+  extractSpotifyId,
   setVoiceStatus,
   clearVoiceStatus,
 };
