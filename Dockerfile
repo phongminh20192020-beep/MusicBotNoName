@@ -14,4 +14,7 @@ RUN npm install --omit=dev
 COPY src ./src
 ENV NODE_ENV=production
 
+# Web dashboard (see src/dashboard) — informational only, doesn't change how the bot runs.
+EXPOSE 3000
+
 CMD ["node", "src/index.js"]

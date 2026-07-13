@@ -7,6 +7,7 @@ const path = require("path");
 const { formatDuration, progressBar, resolveSpotify, getSpotifyRecommendations, extractSpotifyId, setVoiceStatus, clearVoiceStatus } = require("./utils/helpers");
 const { purgeExpired } = require("./utils/queueStore");
 const mvStreamer = require("./stream/mvStreamer");
+const { startDashboard } = require("./dashboard/server");
 
 // Purge expired saved queues on startup
 purgeExpired();
@@ -418,5 +419,10 @@ client.on("interactionCreate", async interaction => {
 process.on("unhandledRejection",       reason => console.error("[Process] Unhandled Rejection:", reason));
 process.on("uncaughtException",        err    => console.error("[Process] Uncaught Exception:", err));
 process.on("uncaughtExceptionMonitor", err    => console.error("[Process] Uncaught Exception Monitor:", err));
+
+// ─── Web dashboard ────────────────────────────────────────────────────────────
+// Purely additive: reads existing client/lavalink state and calls existing
+// Player methods (pause/resume/skip/etc). Doesn't change any bot behavior above.
+startDashboard(client);
 
 client.login(process.env.DISCORD_TOKEN);
