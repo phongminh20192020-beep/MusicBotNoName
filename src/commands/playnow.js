@@ -1,7 +1,7 @@
 "use strict";
 
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const { formatDuration, resolveSpotify } = require("../utils/helpers");
+const { formatDuration, resolveSpotify, getSpotifyOEmbed } = require("../utils/helpers");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -86,8 +86,14 @@ module.exports = {
       }
 
       // No LavaSrc — resolve manually
-      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET)
-        return interaction.editReply("❌ Spotify credentials are not configured.");
+      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
+        const oembed = await getSpotifyOEmbed(query);
+        return interaction.editReply(
+          oembed
+            ? `❌ Spotify credentials aren't configured, so I can't play **${oembed.title}**. Set \`SPOTIFY_CLIENT_ID\` and \`SPOTIFY_CLIENT_SECRET\` to enable it.`
+            : "❌ Spotify credentials are not configured."
+        );
+      }
       try {
         const data = await resolveSpotify(query);
         if (!data?.tracks?.[0]) return interaction.editReply("❌ Couldn't resolve that Spotify track.");

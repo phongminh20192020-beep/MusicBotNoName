@@ -175,7 +175,26 @@ function extractSpotifyId(spotifyUri) {
   return match ? (match[1] || match[2]) : null;
 }
 
-// ─── Voice channel status ─────────────────────────────────────────────────────
+// ─── Spotify oEmbed (public, no auth/credentials needed) ─────────────────────
+// Spotify's oEmbed endpoint is meant for embedding Spotify content on other
+// sites. It only returns a title + thumbnail for a track/playlist/album URL —
+// no track listing, no audio. Useful for a nicer message when we can't (or
+// don't want to) fetch full data via the real Web API.
+async function getSpotifyOEmbed(url) {
+  try {
+    const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.title) return null;
+    return { title: data.title, thumbnailUrl: data.thumbnail_url || null };
+  } catch (err) {
+    console.warn("[Spotify] oEmbed lookup failed:", err.message);
+    return null;
+  }
+}
+
 
 async function setVoiceStatus(client, channelId, status) {
   if (!channelId) return;
@@ -196,6 +215,7 @@ module.exports = {
   progressBar,
   getSpotifyToken,
   resolveSpotify,
+  getSpotifyOEmbed,
   getSpotifyRecommendations,
   extractSpotifyId,
   setVoiceStatus,

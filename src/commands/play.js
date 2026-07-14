@@ -1,8 +1,9 @@
 "use strict";
 
 const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType } = require("discord.js");
-const { formatDuration, resolveSpotify } = require("../utils/helpers");
+const { formatDuration, resolveSpotify, getSpotifyOEmbed } = require("../utils/helpers");
 const { loadQueue, deleteQueue }         = require("../utils/queueStore");
+const { searchTrack: lastfmSearch }      = require("../utils/lastfm");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -183,8 +184,14 @@ module.exports = {
       }
 
       // ── No LavaSrc — resolve Spotify ourselves and search YouTube ──────────
-      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET)
-        return interaction.editReply("❌ Spotify credentials are not configured. Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.");
+      if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
+        const oembed = await getSpotifyOEmbed(query);
+        return interaction.editReply(
+          oembed
+            ? `❌ Spotify credentials aren't configured, so I can't fetch the full track list for **${oembed.title}**. Set \`SPOTIFY_CLIENT_ID\` and \`SPOTIFY_CLIENT_SECRET\` to enable it.`
+            : "❌ Spotify credentials are not configured. Set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`."
+        );
+      }
 
       let spotifyData;
       try {
@@ -275,9 +282,27 @@ module.exports = {
     }
 
     // ── Normal search / URL ───────────────────────────────────────────────────
-    const res = await player
-      .search(isUrl ? { query } : { query, source: "ytmsearch" }, interaction.user)
+    // For plain-text queries (not URLs), try Last.fm's free catalog search first
+    // to correct/canonicalize the query (e.g. "believe cher" -> "Cher Believe")
+    // before handing it to YouTube Music. No-op if LASTFM_API_KEY isn't set.
+    let ytQuery = query;
+    let lastfmMatch = null;
+
+    if (!isUrl) {
+      lastfmMatch = await lastfmSearch(query);
+      if (lastfmMatch) ytQuery = `${lastfmMatch.artist} ${lastfmMatch.title}`.trim();
+    }
+
+    let res = await player
+      .search(isUrl ? { query } : { query: ytQuery, source: "ytmsearch" }, interaction.user)
       .catch(err => { console.error("[Play] search error:", err.message); return null; });
+
+    // Corrected query came up empty — retry once with the original raw query
+    if (lastfmMatch && (!res || res.loadType === "empty" || res.loadType === "error")) {
+      res = await player
+        .search({ query, source: "ytmsearch" }, interaction.user)
+        .catch(err => { console.error("[Play] fallback search error:", err.message); return null; });
+    }
 
     if (!res || res.loadType === "empty" || res.loadType === "error")
       return interaction.editReply(`❌ No results found for \`${query}\`.`);
@@ -318,7 +343,8 @@ module.exports = {
           .setThumbnail(
                 track.info.artworkUrl?.trim() ||
                 (track.info.identifier ? `https://img.youtube.com/vi/${track.info.identifier}/mqdefault.jpg` : null)
-              ),
+              )
+          .setFooter(lastfmMatch ? { text: `Matched via Last.fm: ${lastfmMatch.artist} - ${lastfmMatch.title}` } : null),
       ],
     });
   },
